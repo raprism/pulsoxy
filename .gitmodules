@@ -1,0 +1,3 @@
+[submodule "py/PlotlyOfflineStream"]
+	path = py/PlotlyOfflineStream
+	url = git@github.com:prismv/PlotlyOfflineStream.git
