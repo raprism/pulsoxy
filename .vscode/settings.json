@@ -1,0 +1,10 @@
+{
+    "terminal.integrated.env.linux": {
+        "PATH": "/home/ra/.platformio/penv/bin:/home/ra/.platformio/penv:/home/ra/.opam/system/bin:/home/ra/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/bin/X11:/usr/games:/usr/local/games:/opt/anaconda/bin",
+        "PLATFORMIO_CALLER": "vscode"
+    },
+    "files.associations": {
+        "array": "cpp",
+        "initializer_list": "cpp"
+    },
+}

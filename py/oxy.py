@@ -1,6 +1,7 @@
 import io
 import os
 from collections import OrderedDict
+from pathlib import Path
 #
 import numpy as np
 import pandas as pd
@@ -28,8 +29,9 @@ leds_colors = OrderedDict(zip(['IR', 'RED'], ['#A38C89', '#C82C1C']))
 leds = list(leds_colors.keys())
 lcolors = list(leds_colors.values())
 #
-wl_660, fwhm_660 = 660, 20
-wl_880, fwhm_880 = 880, 30
+wl_RED, fwhm_RED = 660, 20
+wl_NIRa, fwhm_NIRa = 880, 30
+wl_NIRb, fwhm_NIRb = 950, 30
 
 
 def get_I(wl_c, FWHM, norm_ampl=True):
@@ -97,38 +99,68 @@ def get_sO2(r, eps):
             + ( eps.loc['IR'].Hb02 - eps.loc['IR'].Hb ) * r )
 
 
-def get_hb_spectra():
-    hb_ext = pd.read_csv('data/Hb_ext.csv', sep=';', comment='#')
+def get_hb_spectra(prefix='.'):
+    fn = Path(prefix) / 'data' / 'Hb_ext.csv'
+    hb_ext = pd.read_csv(fn, sep=';', comment='#')
     return hb_ext.rename(columns={'lambda': 'wl'})
 
 
 ## plotting
-def draw_spectra(axs):
+def draw_spectra(axs,
+                 wl_min=500,
+                 use_NIRb=False,
+                 use_beta=False,
+                 use_DE=False):
+    # # compare https://omlc.org/spectra/hemoglobin/
+    # # and Pulsoximeter script ()
     assert len(axs) > 1
     ## nominal spectra and LED intensities ##
     hb_ext = get_hb_spectra()
-    wl_range_660, I_660 = get_I(wl_660, fwhm_660)
-    wl_range_880, I_880 = get_I(wl_880, fwhm_880)
+    wl_range_RED, I_RED = get_I(wl_RED, fwhm_RED)
+    if use_NIRb:
+        wl_NIR = wl_NIRb
+        wl_range_NIR, I_NIR = get_I(wl_NIRb, fwhm_NIRb)
+    else:
+        wl_NIR = wl_NIRa
+        wl_range_NIR, I_NIR = get_I(wl_NIRa, fwhm_NIRa)
     ## spectra points at wls
-    hb_wl_points = hb_ext.set_index('wl').loc[[wl_660, wl_880]]\
+    if use_beta:
+        # # M = mol/l -> Mol / (cm^3 * 1000)
+        # # and per Fe: factor 1000 / 4 = 250
+        hb_ext[['Hb02', 'Hb']] *= 250E-6
+        ylabel_ext = r'$\beta$ (in $10^6$ cm$^{2}$/Mol)'
+    else:
+        ylabel_ext = r'$\epsilon$ (in cm$^{-1}$M$^{-1}$)'
+    hb_wl_points = hb_ext.set_index('wl').loc[[wl_RED, wl_NIR]]\
                                          .reset_index()
     hb_wl_points.index = ['RED', 'IR']
-    wl_min = 500
     ia = 0
-    hb_ext[hb_ext.wl >= wl_min].plot(
-        x='wl', ax=axs[ia], color=['g', 'b'], logy=True)
+    hb_ext[hb_ext.wl >= wl_min].plot(x='wl',
+                                     ax=axs[ia],
+                                     color=['g', 'b'],
+                                     logy=True)
     ymin, ymax = axs[ia].get_ylim()
     for cidx, row in hb_wl_points.iterrows():
         color = leds_colors[cidx]
         axs[ia].vlines(row[0], ymin, ymax, color, 'dotted')
         axs[ia].plot([row[0]] * 2, row[1:], 'o', color=color)
-    axs[ia].set_ylabel(r'$\epsilon$ (in cm$^{-1}$M$^{-1}$)')
+    axs[ia].set_ylabel(ylabel_ext)
+    # # LEDs
     ia += 1
-    axs[ia].plot(wl_range_660, I_660, color=leds_colors['RED'], label='RED')
-    axs[ia].plot(wl_range_880, I_880, color=leds_colors['IR'], label='IR')
+    if use_DE:
+        ylabel_LED = 'LED Intensität \n(norm. Ampl.)'
+        plabel_RED = 'Rot'
+    else:
+        ylabel_LED = 'LED intensity \n(normed ampl.)'
+        plabel_RED = 'red'
+    axs[ia].plot(wl_range_RED,
+                 I_RED,
+                 color=leds_colors['RED'],
+                 label=plabel_RED)
+    axs[ia].plot(wl_range_NIR, I_NIR, color=leds_colors['IR'], label='NIR')
     axs[ia].legend()
     axs[ia].set_yticks([0, 1])
-    axs[ia].set_ylabel('LED intensity \n(normed ampl.)')
+    axs[ia].set_ylabel(ylabel_LED)
     axs[ia].set_xlabel(r'$\lambda$ (in nm)')
 
 
@@ -136,6 +168,7 @@ def draw_spectra(axs):
 
 
 class Meth:
+
     def __init__(self, oxy_data, min_len=300):
         ## assume that taps can be calculated only once
         ## min_len actually needs to be taken from filter characteristics
@@ -160,8 +193,8 @@ class Meth:
 
     def _prep_data(self, time0=False):
         if time0:
-            self.data.loc[:, 'time_sec'] = 1E-3 * (
-                self.data.time_ms - self.data.time_ms.iloc[0])
+            self.data.loc[:, 'time_sec'] = 1E-3 * (self.data.time_ms -
+                                                   self.data.time_ms.iloc[0])
         else:
             self.data.loc[:, 'time_sec'] = 1E-3 * self.data.time_ms
         self.dt_avg = self.data.time_sec.diff().mean()
@@ -171,12 +204,12 @@ class Meth:
            and len(self.data) >= self.min_len:
             try:
                 Fs = 1. / self.dt_avg
-                Fny = Fs / 2
+                # Fny = Fs / 2
                 window = ('kaiser', 3.)
                 ## filter for AC part
-                taps_lpf = scipy.signal.firwin(51, 3, nyq=Fny, window=window)
+                taps_lpf = scipy.signal.firwin(51, 3, fs=Fs, window=window)
                 ## filter for DC part
-                taps_dc = scipy.signal.firwin(51, 0.3, nyq=Fny, window=window)
+                taps_dc = scipy.signal.firwin(51, 0.3, fs=Fs, window=window)
                 return dict(lpf=taps_lpf, dc=taps_dc)
             except ValueError:
                 return {}
@@ -184,14 +217,17 @@ class Meth:
             return {}
 
     def _set_ac_dc(self, col, low_lim):
-        ac, dc, _ac, _dc = [np.array([np.nan])] * 4
+        ac, dc, _ac, _dc = [np.array(np.nan)] * 4
         if self.taps:
             _ac, _dc = get_ac_dc(self.data[col], self.taps['lpf'],
                                  self.taps['dc'])
         if (abs(_ac) >= low_lim).any():
             ac, dc = _ac, _dc
-        self.data.loc[:, col + '_ac'] = ac
-        self.data.loc[:, col + '_dc'] = dc
+        try:
+            self.data.loc[:, col + '_ac'] = ac
+            self.data.loc[:, col + '_dc'] = dc
+        except ValueError:
+            breakpoint()
 
     def set_ac_dc(self, low_lim=None):
         for col in ['RED', 'IR']:
@@ -214,20 +250,24 @@ class Meth:
         df = self.data
         mpd = int(0.5 / self.dt_avg)
         # take at peaks
-        IR_ac_high = get_peaks(
-            df, 'IR_ac', mph=df.IR_ac.max() * 0.5,
-            mpd=mpd).rename('IR_ac_high')
-        IR_ac_low = get_peaks(
-            df, 'IR_ac', mph=df.IR_ac.max() * 0.5, mpd=mpd,
-            valley=True).rename('IR_ac_low')
-        RED_ac_high = get_peaks(
-            df, 'RED_ac', mph=df.RED_ac.max() * 0.5,
-            mpd=mpd).rename('RED_ac_high')
-        RED_ac_low = get_peaks(
-            df, 'RED_ac', mph=df.RED_ac.max() * 0.5, mpd=mpd,
-            valley=True).rename('RED_ac_low')
-        ac = pd.concat(
-            [IR_ac_high, IR_ac_low, RED_ac_high, RED_ac_low], axis=1)
+        IR_ac_high = get_peaks(df, 'IR_ac', mph=df.IR_ac.max() * 0.5,
+                               mpd=mpd).rename('IR_ac_high')
+        IR_ac_low = get_peaks(df,
+                              'IR_ac',
+                              mph=df.IR_ac.max() * 0.5,
+                              mpd=mpd,
+                              valley=True).rename('IR_ac_low')
+        RED_ac_high = get_peaks(df,
+                                'RED_ac',
+                                mph=df.RED_ac.max() * 0.5,
+                                mpd=mpd).rename('RED_ac_high')
+        RED_ac_low = get_peaks(df,
+                               'RED_ac',
+                               mph=df.RED_ac.max() * 0.5,
+                               mpd=mpd,
+                               valley=True).rename('RED_ac_low')
+        ac = pd.concat([IR_ac_high, IR_ac_low, RED_ac_high, RED_ac_low],
+                       axis=1)
         ## this gives max. 2 peak and 2 valley per heart beat
         #ac = ac.rolling(window=41, min_periods=1)\
         #      .median().abs().dropna()
@@ -236,22 +276,23 @@ class Meth:
                         win_type='kaiser')\
                .mean(beta=3.).abs().dropna()
         ix_r = ac.index
-        r_oxysat = self._get_r_oxysat(
-            ac.RED_ac_high + ac.RED_ac_low, df.RED_dc.loc[ix_r],
-            ac.IR_ac_high + ac.IR_ac_low, df.IR_dc.loc[ix_r])
+        r_oxysat = self._get_r_oxysat(ac.RED_ac_high + ac.RED_ac_low,
+                                      df.RED_dc.loc[ix_r],
+                                      ac.IR_ac_high + ac.IR_ac_low,
+                                      df.IR_dc.loc[ix_r])
         return r_oxysat, ix_r
 
     def get_sO2(self, percentage=True):
         r_oxysat, ix_r = self.get_r_oxysat()
-        sat_OS = pd.concat(
-            [self.data.time_sec[ix_r], r_oxysat.rename('R')], axis=1)
+        sat_OS = pd.concat([self.data.time_sec[ix_r],
+                            r_oxysat.rename('R')],
+                           axis=1)
         sat_OS.loc[:, 'sO2'] = get_sO2(sat_OS.R, self.hb_wl_points)
         if percentage:
             sat_OS.sO2 *= 100.0
-        results = dict(
-            sat_OS=sat_OS,
-            sO2_mean=sat_OS.sO2.mean(),
-            r_OS_mean=sat_OS.R.mean())
+        results = dict(sat_OS=sat_OS,
+                       sO2_mean=sat_OS.sO2.mean(),
+                       r_OS_mean=sat_OS.R.mean())
         return results
 
     def eval(self, low_lim=None, verbose=True):
@@ -303,8 +344,10 @@ class Oxy:
 
     def load(self, do_eval=True):
         if not self.buffer.closed:
-            self.data = pd.read_csv(
-                self.buffer, delimiter=';', header=None, names=self.cols)
+            self.data = pd.read_csv(self.buffer,
+                                    delimiter=';',
+                                    header=None,
+                                    names=self.cols)
             self.buffer.close()
         else:
             # empty df
@@ -329,40 +372,52 @@ class Oxy:
             ax = axs[ia]
             ax.clear()
             #fig, axs = plt.subplots(2, 1, sharex=True)
-            self.data.plot(x='time_sec', y=leds, ax=ax, color=lcolors, style='-')
+            self.data.plot(x='time_sec',
+                           y=leds,
+                           ax=ax,
+                           color=lcolors,
+                           style='-')
+            x = self.data.time_sec
+
+            # # xlim sets uniformly x axis limits
+            def xlim():
+                axs[0].set_xlim(
+                    np.floor(x.min()).round(0),
+                    np.ceil(x.max() + 0.5).round(0))
+
             ax.set_ylabel('meas. intensity (a.u.)')
-        if len(axs)>1:
+        if len(axs) > 1:
             ia += 1
             ax = axs[ia]
             ax.clear()
-            self.data.plot(
-                x='time_sec',
-                y=[led + '_dc' for led in leds],
-                ax=ax,
-                color=lcolors,
-                style='.-')
+            self.data.plot(x='time_sec',
+                           y=[led + '_dc' for led in leds],
+                           ax=ax,
+                           color=lcolors,
+                           style='.-')
             ax.set_ylabel('determined DC part')
         else:
+            xlim()
             return tmpl.format('_1')
-        if len(axs)>2:
+        if len(axs) > 2:
             ia += 1
             ax = axs[ia]
             ax.clear()
-            self.data.plot(
-                x='time_sec',
-                y=[led + '_ac' for led in leds],
-                ax=ax,
-                color=lcolors,
-                style='.-')
+            self.data.plot(x='time_sec',
+                           y=[led + '_ac' for led in leds],
+                           ax=ax,
+                           color=lcolors,
+                           style='.-')
             ax.set_ylabel('determined AC part')
         else:
-            return  tmpl.format('s_1to2')
-        if len(axs)>3:
+            xlim()
+            return tmpl.format('s_1to2')
+        if len(axs) > 3:
             ia += 1
             ax = axs[ia]
             ax.clear()
             if hasattr(ax, 'right_ax'):
-                ax.right_ax.lines = []
+                ax.right_ax.clear()
             ax.set_ylabel(r'$R_{OS}$')
             ax.set_xlabel('meas. time (in seconds)')
             res = self.results
@@ -371,7 +426,8 @@ class Oxy:
                 sat_OS = res['sat_OS'].set_index('time_sec')
                 label = [
                     r'avg. $R_{{OS}}$ of {:.2f}'.format(res['r_OS_mean']),
-                    r'avg. $S^{{unc}}_{{O2}}$% of {:.0f}%'.format(res['sO2_mean'])
+                    r'avg. $S^{{unc}}_{{O2}}$% of {:.0f}%'.format(
+                        res['sO2_mean'])
                 ]
                 sat_OS['R'].plot(
                     #x='time_sec',
@@ -393,11 +449,18 @@ class Oxy:
                     #label=label,
                 )
                 ax.right_ax.set_ylabel(r'$S^{unc}_{O2}$% (uncalibrated)')
-                ax.right_ax.legend(
-                    label[1:], loc=1, markerscale=0.35,
-                    fontsize=14, framealpha=.5)
+                ax.right_ax.legend(label[1:],
+                                   loc=1,
+                                   markerscale=0.35,
+                                   fontsize=14,
+                                   framealpha=.5)
                 ax.legend(label[:1], loc=2, markerscale=0.35,
                           fontsize=16)  # framealpha=.5
         else:
-            return   tmpl.format('s_1to3')
-        return tmpl.format('s_all')
+            xlim()
+            return tmpl.format('s_1to3')
+        if len(axs):
+            xlim()
+            return tmpl.format('s_all')
+        else:
+            return 'NO_DATA'
