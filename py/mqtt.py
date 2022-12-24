@@ -2,6 +2,7 @@
 import sys
 import logging
 import asyncio
+import signal
 
 import pandas as pd
 
@@ -13,10 +14,11 @@ import oxy
 
 
 class SkipTimeouts(logging.Filter):
+
     def filter(self, rec):
-        if (rec.levelno == logging.INFO and rec.msg.startswith('poll') and
-                rec.msg.endswith(': timeout') and
-                rec.args[1] - rec.args[0] < 10):
+        if (rec.levelno == logging.INFO and rec.msg.startswith('poll')
+                and rec.msg.endswith(': timeout')
+                and rec.args[1] - rec.args[0] < 10):
             ## TODO here rec.args were not set as awaited
             #print(rec.args)
             return False  # hide this record
@@ -107,6 +109,7 @@ async def sub_produce(queue, n=None):
     except ClientException as ce:
         logger.error("Client exception: %s" % ce)
 
+
 def _test_action(buffer, keep=None):
     if keep is not None:
 
@@ -124,14 +127,13 @@ def _test_action(buffer, keep=None):
         return oo
 
 
-async def sub_consume(queue, action,
-                      n=None,
-                      keep=None,
-                      keep_lim=400):
+async def sub_consume(queue, action, n=None, keep=None, keep_lim=400):
+
     def _concat(df, ret):
         #cols = oxy.Oxy.cols # raw data only
         #ret = pd.concat([keep[cols], ret]).reset_index(drop=True)
         return pd.concat([df, ret.data]).reset_index(drop=True)
+
     i = 0
     while True:
         # wait for an item from the producer
@@ -172,14 +174,20 @@ async def run_subscription(consumer_action,
                            consume_keep=None):
     queue = asyncio.Queue()
     # schedule the consumer
-    consumer = asyncio.ensure_future(sub_consume(
-        queue, consumer_action, n=consume_n, keep=consume_keep))
+    consumer = asyncio.ensure_future(
+        sub_consume(queue, consumer_action, n=consume_n, keep=consume_keep))
     # run the producer and wait for completion
     await sub_produce(queue, n=produce_n)
     # wait until the consumer has processed all items
     await queue.join()
     # the consumer is still awaiting for an item, cancel it
     consumer.cancel()
+
+
+def tasks_cancel_handler():
+    logger.debug('cancel tasks by handler')
+    for task in asyncio.Task.all_tasks():
+        task.cancel()
 
 
 if __name__ == '__main__':
@@ -195,15 +203,21 @@ if __name__ == '__main__':
 
     loop = asyncio.get_event_loop()
 
+    # see e.g. https://stackoverflow.com/questions/33505066/python3-asyncio-task-was-destroyed-but-it-is-pending-with-some-specific-condit#33595068
+    loop.add_signal_handler(signal.SIGINT, tasks_cancel_handler)
+
     try:
         if '-p' in sys.argv[1:]:
             loop.run_until_complete(run_publisher(n_p))
         else:
-            future = run_subscription(
-                consumer_action=_test_action,
-                consume_n=n,
-                produce_n=n_p,
-                consume_keep=oo_init)
+            future = run_subscription(consumer_action=_test_action,
+                                      consume_n=n,
+                                      produce_n=n_p,
+                                      consume_keep=oo_init)
             loop.run_until_complete(future)
+    except asyncio.CancelledError:
+        logger.info(
+            'The asyncio tasks have been cancelled. Shutting down event loop ...'
+        )
     finally:
         loop.close()

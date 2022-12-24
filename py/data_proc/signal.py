@@ -576,7 +576,7 @@ def mfreqz(b, a=1, fig_num=None):
     ax.set_ylabel('Magnitude (db)')
     ax.set_title(r'Frequency response')
     ax = axs[1]
-    h_Phase = np.unwrap(np.arctan2(np.imag(h), np.real(h)))
+    h_Phase = np.unwrap(np.angle(h))
     ax.plot(w / max(w), h_Phase)
     ax.set_ylabel('Phase (radians)')
     ax.set_xlabel(r'Normalized Frequency (x$\pi$rad/sample)')

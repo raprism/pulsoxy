@@ -1,6 +1,7 @@
 # coding: utf-8
-import os, sys
+import sys
 import logging
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.signal
@@ -31,7 +32,9 @@ else:
     #fn = 'data/demo.csv'
     fn = 'data/demo2.csv'
 
-tname = '.'.join(os.path.basename(fn).split('.')[:-1])
+fn_path = Path(fn)
+
+tname = '.'.join(fn_path.name.split('.')[:-1])
 ftmpl = tname + ' - #{}'
 
 #oo = oxy.Oxy(fn)
