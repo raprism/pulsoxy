@@ -21,5 +21,8 @@ to start local MQTT messaging from saved data.
 
 ## TODO
 
-- improved documentation
-- ...
+- improved user documentation
+
+___
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/raprism/pulsoxy)
